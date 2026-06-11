@@ -1,3 +1,88 @@
+<!DOCTYPE html>
 <html>
-  
+<head>
+    <title>External Mic Recorder</title>
+</head>
+<body>
+    <!-- This page is intended to be loaded in a hidden iframe -->
+    <script>
+        let stream;
+        let isRecording = false;
+        let mediaRecorder;
+
+        // 1. Listen for commands from the parent (Diary App)
+        window.addEventListener('message', async (event) => {
+            if (event.data.command === 'START_RECORDING') {
+                startRecording();
+            } else if (event.data.command === 'STOP_RECORDING') {
+                stopRecording();
+            }
+        });
+
+        async function startRecording() {
+            if (isRecording) return;
+            
+            try {
+                // Request microphone access
+                if (!stream) {
+                    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
+                
+                isRecording = true;
+                console.log("Recorder: Started");
+                runRecordingLoop();
+                
+            } catch (err) {
+                window.parent.postMessage({ 
+                    type: 'RECORDER_ERROR', 
+                    message: "Mic access denied in external recorder: " + err.message 
+                }, '*');
+            }
+        }
+
+        function runRecordingLoop() {
+            if (!isRecording) return;
+
+            const recorder = new MediaRecorder(stream);
+            const chunks = [];
+
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0) chunks.push(e.data);
+            };
+
+            recorder.onstop = async () => {
+                if (chunks.length > 0) {
+                    const blob = new Blob(chunks, { type: recorder.mimeType });
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64 = reader.result.split(',')[1];
+                        // 2. Send the audio chunk back to the Diary App
+                        window.parent.postMessage({
+                            type: 'AUDIO_CHUNK',
+                            base64: base64,
+                            mimeType: recorder.mimeType
+                        }, '*');
+                    };
+                    reader.readAsDataURL(blob);
+                }
+                
+                // Continue the loop if still recording
+                if (isRecording) runRecordingLoop();
+            };
+
+            // Start recording the 7-second chunk
+            recorder.start();
+            setTimeout(() => {
+                if (recorder.state === "recording") {
+                    recorder.stop();
+                }
+            }, 7000);
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            console.log("Recorder: Stopped");
+        }
+    </script>
+</body>
 </html>
