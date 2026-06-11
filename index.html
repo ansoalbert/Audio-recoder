@@ -17,6 +17,8 @@
     <script>
         let stream;
         let isRecording = false;
+        let currentRecorder;
+        let currentTimeout;
 
         // Listen for commands from the Main Diary App
         window.addEventListener('message', async (event) => {
@@ -49,41 +51,51 @@
         function runRecordingLoop() {
             if (!isRecording) return;
 
-            const recorder = new MediaRecorder(stream);
+            currentRecorder = new MediaRecorder(stream);
             const chunks = [];
 
-            recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+            currentRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
-            recorder.onstop = async () => {
+            currentRecorder.onstop = async () => {
                 if (chunks.length > 0) {
                     console.log("Popup: Chunk captured, sending to Main App...");
-                    const blob = new Blob(chunks, { type: recorder.mimeType });
+                    const blob = new Blob(chunks, { type: currentRecorder.mimeType });
                     const reader = new FileReader();
                     reader.onloadend = () => {
                         const base64 = reader.result.split(',')[1];
-                        // CRITICAL: Use window.opener for Popups, fallback to window.parent for Iframes
                         const target = window.opener || window.parent;
                         target.postMessage({
                             type: 'AUDIO_CHUNK',
                             base64: base64,
-                            mimeType: recorder.mimeType
+                            mimeType: currentRecorder.mimeType
                         }, '*');
                     };
                     reader.readAsDataURL(blob);
                 }
+                // Only start another loop if we haven't been stopped
                 if (isRecording) runRecordingLoop();
             };
 
-            recorder.start();
-            setTimeout(() => {
-                if (recorder.state === "recording") recorder.stop();
-            }, 7000); // 7 second chunks
+            currentRecorder.start();
+            
+            // Set timeout for 7 seconds
+            currentTimeout = setTimeout(() => {
+                if (currentRecorder && currentRecorder.state === "recording") {
+                    currentRecorder.stop();
+                }
+            }, 7000); 
         }
 
         function stopRecording() {
             isRecording = false;
             document.getElementById('status').innerText = "Recording Stopped";
             document.getElementById('pulse').style.display = "none";
+            
+            // Immediately stop the current chunk so it gets processed
+            if (currentRecorder && currentRecorder.state === "recording") {
+                clearTimeout(currentTimeout);
+                currentRecorder.stop();
+            }
             console.log("Popup: Recording Stopped");
         }
     </script>
